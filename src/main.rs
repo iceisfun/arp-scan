@@ -11,6 +11,10 @@ use cidr::Ipv4Cidr;
 
 use std::collections::HashMap;
 use std::str;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 // Static OUI database
 const OUI_CSV: &[u8] = include_bytes!("../data/mac-vendors-export.csv");
@@ -82,8 +86,16 @@ fn main() {
     let cidr: Ipv4Cidr = args.network.parse().expect("Invalid CIDR");
    let hosts: Vec<Ipv4Addr> = cidr.iter().map(|inet| inet.address()).collect();
 
+    // Announce start of scan
+    println!(
+        "Scanning {} on interface {}...",
+        args.network, args.interface
+    );
+
     // Spawn a listener thread for replies
-    let listener = thread::spawn(move || listen_replies(rx, args.timeout));
+    let found_counter = Arc::new(AtomicUsize::new(0));
+    let found_for_thread = Arc::clone(&found_counter);
+    let listener = thread::spawn(move || listen_replies(rx, args.timeout, found_for_thread));
 
     // Send ARP requests
     for target_ip in hosts {
@@ -96,6 +108,10 @@ fn main() {
 
     // Wait for listener to finish
     listener.join().unwrap();
+
+    // Print summary
+    let total_found = found_counter.load(Ordering::SeqCst);
+    println!("Scan complete. Found {} hosts.", total_found);
 }
 
 fn send_arp(
@@ -130,7 +146,11 @@ fn send_arp(
     }
 }
 
-fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
+fn listen_replies(
+    mut rx: Box<dyn DataLinkReceiver>,
+    timeout: u64,
+    found_counter: Arc<AtomicUsize>,
+) {
     let oui_map = parse_oui();
     let start = Instant::now();
 
@@ -153,6 +173,9 @@ fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
                                     sender_mac,
                                     vendor
                                 );
+
+                                // Track discovered hosts count
+                                found_counter.fetch_add(1, Ordering::SeqCst);
                             }
                         }
                     }
