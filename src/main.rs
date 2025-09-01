@@ -4,6 +4,7 @@ use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPa
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::{MutablePacket, Packet};
 use pnet::util::MacAddr;
+use pnet::ipnetwork::IpNetwork;
 use std::net::Ipv4Addr;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -47,9 +48,9 @@ struct Args {
     #[arg(short, long)]
     interface: String,
 
-    /// CIDR network to scan (e.g., 192.168.1.0/24)
+    /// CIDR network to scan (e.g., 192.168.1.0/24). If omitted, auto-detect.
     #[arg(short, long)]
-    network: String,
+    network: Option<String>,
 
     /// Timeout (seconds) to wait for replies
     #[arg(short, long, default_value_t = 3)]
@@ -66,6 +67,30 @@ fn main() {
         .unwrap_or_else(|| panic!("Interface {} not found", args.interface));
 
     let source_mac = iface.mac.expect("Interface has no MAC");
+
+    let (mut _tx, _rx) = match datalink::channel(&iface, Default::default()) {
+        Ok(Ethernet(tx, rx)) => (tx, rx),
+        Ok(_) => panic!("Unhandled channel type"),
+        Err(e) => panic!("Failed to open datalink channel: {e}"),
+    };
+
+    // Auto-detect CIDR network if not provided
+    let network = args.network.unwrap_or_else(|| {
+        iface.ips
+            .iter()
+            .find_map(|ip| match ip {
+                IpNetwork::V4(v4net) => {
+                    let net_addr: Ipv4Addr = v4net.network();   // <-- gives 10.2.150.0
+                    let prefix = v4net.prefix();                // <-- gives 24
+                    let cidr = Ipv4Cidr::new(net_addr, prefix)
+                        .expect("Failed to build CIDR");
+                    Some(cidr.to_string())
+                }
+                _ => None,
+            })
+            .expect("Interface has no IPv4 network")
+    });
+
     let source_ip = iface
         .ips
         .iter()
@@ -75,7 +100,6 @@ fn main() {
         })
         .expect("Interface has no IPv4 address");
 
-
     let (mut tx, rx) = match datalink::channel(&iface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unhandled channel type"),
@@ -83,13 +107,12 @@ fn main() {
     };
 
     // Parse CIDR argument
-    let cidr: Ipv4Cidr = args.network.parse().expect("Invalid CIDR");
-   let hosts: Vec<Ipv4Addr> = cidr.iter().map(|inet| inet.address()).collect();
+    let cidr: Ipv4Cidr = network.parse().expect("Invalid CIDR");
+    let hosts: Vec<Ipv4Addr> = cidr.iter().map(|inet| inet.address()).collect();
 
-    // Announce start of scan
     println!(
         "Scanning {} on interface {}...",
-        args.network, args.interface
+        network, args.interface
     );
 
     // Spawn a listener thread for replies
