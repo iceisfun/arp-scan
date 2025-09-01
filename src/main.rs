@@ -9,6 +9,34 @@ use std::thread;
 use std::time::{Duration, Instant};
 use cidr::Ipv4Cidr;
 
+use std::collections::HashMap;
+use std::str;
+
+// Embed the CSV file into the binary at compile time
+// (replace "data/oui.csv" with the path to your CSV file)
+const OUI_CSV: &[u8] = include_bytes!("../data/mac-vendors-export.csv");
+
+/// Parses the embedded CSV into a HashMap of prefix → vendor
+fn parse_oui() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(OUI_CSV);
+
+    for result in rdr.records() {
+        if let Ok(record) = result {
+            // record[0] = "00:01:E5"
+            // record[1] = "Supernet, Inc."
+            let prefix = record[0].to_ascii_uppercase().replace(':', "");
+            let vendor = record[1].to_string();
+            map.insert(prefix, vendor);
+        }
+    }
+
+    map
+}
+
 /// Quick & dirty ARP scanner
 #[derive(Parser, Debug)]
 struct Args {
@@ -104,7 +132,9 @@ fn send_arp(
 }
 
 fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
+    let oui_map = parse_oui(); // <-- load once outside loop!
     let start = Instant::now();
+
     while start.elapsed() < Duration::from_secs(timeout) {
         match rx.next() {
             Ok(pkt) => {
@@ -112,10 +142,17 @@ fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
                     if eth.get_ethertype() == EtherTypes::Arp {
                         if let Some(arp) = ArpPacket::new(eth.payload()) {
                             if arp.get_operation() == ArpOperations::Reply {
+                                let sender_mac = arp.get_sender_hw_addr();
+                                let vendor = oui_map
+                                    .get(&normalize_mac_prefix(sender_mac))
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("Unknown Vendor");
+
                                 println!(
-                                    "{} is at {}",
+                                    "{} is at {} ({})",
                                     arp.get_sender_proto_addr(),
-                                    arp.get_sender_hw_addr()
+                                    sender_mac,
+                                    vendor
                                 );
                             }
                         }
@@ -125,4 +162,10 @@ fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
             Err(_) => {}
         }
     }
+}
+
+/// Normalize MAC → 6 hex chars (OUI prefix)
+fn normalize_mac_prefix(mac: MacAddr) -> String {
+    let full = mac.to_string().replace(':', "").to_ascii_uppercase();
+    full[..6].to_string()
 }
