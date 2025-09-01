@@ -12,8 +12,7 @@ use cidr::Ipv4Cidr;
 use std::collections::HashMap;
 use std::str;
 
-// Embed the CSV file into the binary at compile time
-// (replace "data/oui.csv" with the path to your CSV file)
+// Static OUI database
 const OUI_CSV: &[u8] = include_bytes!("../data/mac-vendors-export.csv");
 
 /// Parses the embedded CSV into a HashMap of prefix → vendor
@@ -132,7 +131,7 @@ fn send_arp(
 }
 
 fn listen_replies(mut rx: Box<dyn DataLinkReceiver>, timeout: u64) {
-    let oui_map = parse_oui(); // <-- load once outside loop!
+    let oui_map = parse_oui();
     let start = Instant::now();
 
     while start.elapsed() < Duration::from_secs(timeout) {
