@@ -17,29 +17,9 @@ use std::sync::{
     Arc,
 };
 
-// Static OUI database
-const OUI_CSV: &[u8] = include_bytes!("../data/mac-vendors-export.csv");
 
-/// Parses the embedded CSV into a HashMap of prefix → vendor
-fn parse_oui() -> HashMap<String, String> {
-    let mut map = HashMap::new();
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(OUI_CSV);
-
-    for result in rdr.records() {
-        if let Ok(record) = result {
-            // record[0] = "00:01:E5"
-            // record[1] = "Supernet, Inc."
-            let prefix = record[0].to_ascii_uppercase().replace(':', "");
-            let vendor = record[1].to_string();
-            map.insert(prefix, vendor);
-        }
-    }
-
-    map
-}
+// Static OUI database, Generated at build time
+include!(concat!(env!("OUT_DIR"), "/oui_table.rs"));
 
 /// Quick & dirty ARP scanner
 #[derive(Parser, Debug)]
@@ -169,12 +149,19 @@ fn send_arp(
     }
 }
 
+fn normalize_mac_prefix(mac: MacAddr) -> u32 {
+    let full = mac.to_string().replace(':', "").to_ascii_uppercase();
+    u32::from_str_radix(&full[..6], 16).unwrap()
+}
+
 fn listen_replies(
     mut rx: Box<dyn DataLinkReceiver>,
     timeout: u64,
     found_counter: Arc<AtomicUsize>,
 ) {
-    let oui_map = parse_oui();
+    // Build a HashMap from the generated static table
+    let oui_map: HashMap<u32, &str> = OUI_TABLE.iter().cloned().collect();
+
     let start = Instant::now();
 
     while start.elapsed() < Duration::from_secs(timeout) {
@@ -185,9 +172,11 @@ fn listen_replies(
                         if let Some(arp) = ArpPacket::new(eth.payload()) {
                             if arp.get_operation() == ArpOperations::Reply {
                                 let sender_mac = arp.get_sender_hw_addr();
+                                let prefix = normalize_mac_prefix(sender_mac);
+
                                 let vendor = oui_map
-                                    .get(&normalize_mac_prefix(sender_mac))
-                                    .map(|s| s.as_str())
+                                    .get(&prefix)
+                                    .copied() // turns Option<&&str> into Option<&str>
                                     .unwrap_or("Unknown Vendor");
 
                                 println!(
@@ -197,7 +186,6 @@ fn listen_replies(
                                     vendor
                                 );
 
-                                // Track discovered hosts count
                                 found_counter.fetch_add(1, Ordering::SeqCst);
                             }
                         }
@@ -207,10 +195,4 @@ fn listen_replies(
             Err(_) => {}
         }
     }
-}
-
-/// Normalize MAC → 6 hex chars (OUI prefix)
-fn normalize_mac_prefix(mac: MacAddr) -> String {
-    let full = mac.to_string().replace(':', "").to_ascii_uppercase();
-    full[..6].to_string()
 }

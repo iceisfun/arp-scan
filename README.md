@@ -94,6 +94,15 @@ Scan complete. Found 5 hosts.
 
 The OUI database is embedded at build time from `data/mac-vendors-export.csv`. To update the vendor list, simply replace this file with a newer version and rebuild the project with `cargo build --release`.
 
+This project uses the static OUI database from maclookup.app
+(mac-vendors-export.csv), which is derived from the IEEE OUI public registry.
+
+Data © IEEE. Export © maclookup.app.
+See: https://maclookup.app/downloads/csv-database
+
+If doing a production build its recommended to get a fresh version of this file.
+
+
 -----
 
 ## Attribution
