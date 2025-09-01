@@ -65,15 +65,16 @@ fn main() {
             .expect("Interface has no IPv4 network")
     });
 
-    let source_ip = iface
-        .ips
-        .iter()
-        .find_map(|ip| match ip.ip() {
-            std::net::IpAddr::V4(v4) => Some(v4),
-            _ => None,
-        })
-        .expect("Interface has no IPv4 address");
-
+    let source_ip = match iface.ips.iter().find_map(|ip| match ip.ip() {
+        std::net::IpAddr::V4(v4) => Some(v4),
+        _ => None,
+    }) {
+        Some(ip) => ip,
+        None => {
+            eprintln!("Error: Interface '{}' has no IPv4 address.", iface.name);
+            std::process::exit(1);
+        }
+    };
     let (mut tx, rx) = match datalink::channel(&iface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unhandled channel type"),
@@ -82,7 +83,6 @@ fn main() {
 
     // Parse CIDR argument
     let cidr: Ipv4Cidr = network.parse().expect("Invalid CIDR");
-    let hosts: Vec<Ipv4Addr> = cidr.iter().map(|inet| inet.address()).collect();
 
     println!(
         "Scanning {} on interface {}...",
@@ -95,7 +95,7 @@ fn main() {
     let listener = thread::spawn(move || listen_replies(rx, args.timeout, found_for_thread));
 
     // Send ARP requests
-    for target_ip in hosts {
+    for target_ip in cidr.iter().map(|inet| inet.address()) {
         if target_ip == source_ip {
             continue;
         }
@@ -146,7 +146,6 @@ fn send_arp(
 fn normalize_mac_prefix(mac: MacAddr) -> u32 {
     ((mac.0 as u32) << 16) | ((mac.1 as u32) << 8) | (mac.2 as u32)
 }
-
 
 fn listen_replies(
     mut rx: Box<dyn DataLinkReceiver>,
