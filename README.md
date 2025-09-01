@@ -38,18 +38,26 @@ sudo ./target/release/arp-scan \
   --network 192.168.1.0/24
 ```
 
+Otherwise cap_net_raw+eip can be set then the binary can be run as a non-root user
+```bash
+sudo setcap cap_net_raw+eip target/release/arp-scan
+./target/release/arp-scan --interface eth0
+```
+
 -----
 
 ## usage
 
 The tool requires an interface and a network range. You can also specify a custom timeout.
 
+If the --network is omitted the first ipv4 network on the --interface is used by default
+
 ### Command-Line Options
 
 | Flag                     | Description                                            | Default |
 | ------------------------ | ------------------------------------------------------ | ------- |
 | `-i`, `--interface <IF>` | Network interface to use (e.g., `eth0`, `enp3s0`).     | (none)  |
-| `-n`, `--network <CIDR>` | IPv4 network in CIDR notation (e.g., `192.168.1.0/24`). | (none)  |
+| `-n`, `--network <CIDR>` | IPv4 network in CIDR notation (e.g., `192.168.1.0/24`). | `first ipv4 network from --interface`  |
 | `-t`, `--timeout <SEC>`  | Seconds to wait for replies after sending all packets.  | `3`     |
 
 ### Example Output
@@ -84,7 +92,7 @@ Scan complete. Found 5 hosts.
 
   * **IPv4 Only**: Does not support IPv6 or Neighbor Discovery Protocol.
   * **Same Broadcast Domain**: The scanner must be on the same L2 network segment as the targets.
-  * **Requires Privileges**: Needs `sudo` or root access to open raw sockets.
+  * **Requires Privileges**: Needs `sudo` or `setcap cap_net_raw+eip` or root access to open raw sockets.
   * **Static OUI Database**: The vendor mapping is based on a CSV file compiled into the binary and may become outdated.
   * **Stealthy Hosts**: Devices configured to ignore broadcast ARP requests will not be detected.
 

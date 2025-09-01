@@ -48,12 +48,6 @@ fn main() {
 
     let source_mac = iface.mac.expect("Interface has no MAC");
 
-    let (mut _tx, _rx) = match datalink::channel(&iface, Default::default()) {
-        Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("Unhandled channel type"),
-        Err(e) => panic!("Failed to open datalink channel: {e}"),
-    };
-
     // Auto-detect CIDR network if not provided
     let network = args.network.unwrap_or_else(|| {
         iface.ips
@@ -145,14 +139,14 @@ fn send_arp(
     }
 
     if let Some(Err(e)) = tx.send_to(eth.packet(), Some(iface.clone())) {
-        eprintln!("send_to {} failed: {e}", target_ip);
+        eprintln!("send_to {} on iface {} failed: {e}", target_ip, iface.name);
     }
 }
 
 fn normalize_mac_prefix(mac: MacAddr) -> u32 {
-    let full = mac.to_string().replace(':', "").to_ascii_uppercase();
-    u32::from_str_radix(&full[..6], 16).unwrap()
+    ((mac.0 as u32) << 16) | ((mac.1 as u32) << 8) | (mac.2 as u32)
 }
+
 
 fn listen_replies(
     mut rx: Box<dyn DataLinkReceiver>,
